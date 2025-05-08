@@ -34,20 +34,11 @@ app.post("/api/ai", async (req, res) => {
 });
 
 app.post("/api/generate-lesson", async (req, res) => {
-  console.log("Received request for lesson generation:", req.body);
+  console.log("[BACKEND] Received request for lesson generation:", req.body);
   const { weaknesses = [], difficulty = "easy" } = req.body;
 
-  // Create a more specific prompt
-  let prompt = `Act as a typing tutor. Create exactly 12 simple English sentences for typing practice.
-Rules:
-1. Each sentence MUST be a complete, standalone sentence
-2. Each sentence MUST start with a capital letter and end with a period
-3. Use only common English words
-4. Keep sentences short (5-15 words each)
-5. Put each sentence on a new line
-6. Use simple punctuation (periods and commas only)
-7. No numbers or special characters
-8. No quotation marks or dialogue`;
+  // Create a more open-ended prompt
+  let prompt = `Write a story or passage in English for typing practice. The topic can be anything, including science, art, history, technology, or any other field. Each sentence must start with a capital letter and end with a period, exclamation mark, or question mark. Use proper punctuation. Put each sentence on a new line. Dialogue is allowed. Numbers and special characters are allowed. Do NOT use any ordered lists or bullet points. Respond ONLY with the story, one sentence per line. No other text.`;
 
   if (weaknesses.length > 0) {
     prompt += `\n9. Include words with these letters: ${weaknesses.join(", ")}`;
@@ -62,98 +53,70 @@ Rules:
   }
 
   prompt +=
-    "\n\nRespond ONLY with the 12 sentences, one per line. No other text.";
+    "\n\nRespond ONLY with the story, one sentence per line. No other text.";
+
+  console.log("[BACKEND] Prompt sent to Ollama:", prompt);
 
   try {
-    console.log("Sending request to Ollama...");
+    console.log("[BACKEND] Sending request to Ollama...");
     const response = await axios.post("http://localhost:11434/api/generate", {
       model: "phi",
       prompt,
       stream: false,
     });
 
-    console.log("Raw response from Ollama:", response.data);
+    console.log("[BACKEND] Raw response from Ollama:", response.data);
 
     if (!response.data.response) {
       throw new Error("No response from Ollama");
     }
 
-    // Enhanced text cleaning and validation
-    const lines = response.data.response
-      .split("\n")
+    // Improved sentence splitting regex
+    const sentences =
+      response.data.response.match(/[^.!?]+[.!?]["']?(?=\s|$)/g) || [];
+    const lines = sentences
       .map((line) => line.trim())
       .filter((line) => line.length > 0);
 
-    console.log("Initial lines:", lines);
+    console.log("[BACKEND] Initial lines:", lines);
 
     const cleanedLines = lines
       .map((line) => {
-        // Remove leading number and dot (e.g., '1. ')
-        line = line.replace(/^\d+\.\s*/, "");
-        // Remove leading/trailing quotes
+        // Remove leading number, bullet, or dot (e.g., '1. ', '- ', '* ', etc.)
+        line = line.replace(/^\s*([\d]+[.)]|[-*•])\s*/, "");
+        // Remove leading/trailing quotes (but keep dialogue quotes inside the sentence)
         line = line.replace(/^['"]|['"]$/g, "");
-
         // Remove extra spaces
         line = line.trim().replace(/\s+/g, " ");
-
         // Ensure first letter is capital
         line = line.charAt(0).toUpperCase() + line.slice(1);
-
         // Ensure ends with period
-        if (!line.endsWith(".")) {
+        if (!/[.!?]$/.test(line)) {
           line = line + ".";
         }
-
         // Fix spacing around commas
         line = line.replace(/\s*,\s*/g, ", ");
-
         return line;
       })
       .filter((line) => {
-        // Validate each sentence
+        // Validate each sentence (no list, but allow numbers, special chars, dialogue)
         return (
           line.length >= 10 && // Minimum length
-          line.length <= 150 && // Maximum length
-          /^[A-Z].*\.$/.test(line) && // Starts with capital, ends with period
-          !/["""''']/.test(line) && // No quotes
-          !/[0-9]/.test(line) && // No numbers
-          !/[;:!?]/.test(line) && // No complex punctuation (but allow commas)
+          line.length <= 200 && // Maximum length
+          /^[A-Z].*[.!?]$/.test(line) && // Starts with capital, ends with period
           !/\s{2,}/.test(line) // No double spaces
         );
       });
 
-    console.log("Cleaned lines:", cleanedLines);
+    console.log("[BACKEND] Cleaned lines:", cleanedLines);
 
-    if (cleanedLines.length < 5) {
-      // If we don't have enough sentences, add some default ones
-      const defaultSentences = [
-        "The quick brown fox jumps over the lazy dog.",
-        "She walks to the park every morning.",
-        "The sun shines brightly in the blue sky.",
-        "My friend enjoys reading books in the garden.",
-        "The cat sleeps peacefully on the windowsill.",
-        "Birds sing beautiful songs in the trees.",
-        "He practices typing to improve his skills.",
-        "The flowers bloom in the spring garden.",
-        "Children play happily in the playground.",
-        "The wind blows gently through the leaves.",
-        "Time flies when you are having fun.",
-        "Good things come to those who wait.",
-      ];
+    // Return the full story as the lesson (no slicing, no fallback)
+    const cleanedLesson = cleanedLines.join("\n");
 
-      while (cleanedLines.length < 12) {
-        cleanedLines.push(defaultSentences[cleanedLines.length]);
-      }
-    }
-
-    // Take exactly 12 sentences
-    const finalSentences = cleanedLines.slice(0, 12);
-    const cleanedLesson = finalSentences.join("\n");
-
-    console.log("Sending cleaned lesson:", cleanedLesson);
+    console.log("[BACKEND] Sending cleaned lesson:", cleanedLesson);
     res.json({ lesson: cleanedLesson });
   } catch (err) {
-    console.error("Error in /api/generate-lesson:", err);
+    console.error("[BACKEND] Error in /api/generate-lesson:", err);
     res.status(500).json({
       error: err.message,
       details:
