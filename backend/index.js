@@ -1,7 +1,11 @@
+require("dotenv").config();
+const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_key_change_me";
 const express = require("express");
 const axios = require("axios");
 const cors = require("cors");
 const { exec } = require("child_process");
+const jwt = require("jsonwebtoken");
+const bcrypt = require("bcryptjs");
 
 const app = express();
 app.use(cors());
@@ -18,6 +22,54 @@ exec("ollama serve", (error, stdout, stderr) => {
     console.log("Ollama started.");
   }
 });
+
+// In-memory user storage: { username: { passwordHash, stats: [] } }
+const users = {};
+
+// Registration endpoint
+app.post("/api/register", async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) {
+    return res.status(400).json({ error: "Username and password required" });
+  }
+  if (users[username]) {
+    return res.status(409).json({ error: "Username already exists" });
+  }
+  const passwordHash = await bcrypt.hash(password, 10);
+  users[username] = { passwordHash, stats: [] };
+  res.json({ success: true });
+});
+
+// Login endpoint
+app.post("/api/login", async (req, res) => {
+  const { username, password } = req.body;
+  const user = users[username];
+  if (!user) {
+    return res.status(401).json({ error: "Invalid credentials" });
+  }
+  const valid = await bcrypt.compare(password, user.passwordHash);
+  if (!valid) {
+    return res.status(401).json({ error: "Invalid credentials" });
+  }
+  const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: "7d" });
+  res.json({ token });
+});
+
+// Auth middleware
+function requireAuth(req, res, next) {
+  const auth = req.headers.authorization;
+  if (!auth || !auth.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Missing or invalid token" });
+  }
+  const token = auth.split(" ")[1];
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    req.user = payload;
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: "Invalid token" });
+  }
+}
 
 app.post("/api/ai", async (req, res) => {
   const { prompt } = req.body;
@@ -160,6 +212,41 @@ Rules:
         "Please ensure Ollama is running and the phi model is installed.",
     });
   }
+});
+
+// Save completed lesson stats (per user)
+app.post("/api/stats", requireAuth, (req, res) => {
+  const { wpm, accuracy, errors, lessonLength } = req.body;
+  if (
+    typeof wpm !== "number" ||
+    typeof accuracy !== "number" ||
+    typeof errors !== "number" ||
+    typeof lessonLength !== "number"
+  ) {
+    return res.status(400).json({ error: "Invalid stats data" });
+  }
+  const username = req.user.username;
+  if (!users[username]) {
+    return res.status(401).json({ error: "User not found" });
+  }
+  const entry = {
+    date: new Date().toISOString(),
+    wpm,
+    accuracy,
+    errors,
+    lessonLength,
+  };
+  users[username].stats.push(entry);
+  res.json({ success: true });
+});
+
+// Get all completed lesson stats for logged-in user
+app.get("/api/stats", requireAuth, (req, res) => {
+  const username = req.user.username;
+  if (!users[username]) {
+    return res.status(401).json({ error: "User not found" });
+  }
+  res.json({ stats: users[username].stats });
 });
 
 app.listen(3001, () => console.log("AI backend running on port 3001"));
