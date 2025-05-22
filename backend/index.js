@@ -86,7 +86,6 @@ app.post("/api/ai", async (req, res) => {
 });
 
 app.post("/api/generate-lesson", async (req, res) => {
-  console.log("Received request for lesson generation:", req.body);
   const { weaknesses = [], difficulty = "easy" } = req.body;
 
   // Create a more specific prompt
@@ -117,14 +116,11 @@ Rules:
     "\n\nRespond ONLY with the 12 sentences, one per line. No other text.";
 
   try {
-    console.log("Sending request to Ollama...");
     const response = await axios.post("http://localhost:11434/api/generate", {
       model: "phi",
       prompt,
       stream: false,
     });
-
-    console.log("Raw response from Ollama:", response.data);
 
     if (!response.data.response) {
       throw new Error("No response from Ollama");
@@ -135,8 +131,6 @@ Rules:
       .split("\n")
       .map((line) => line.trim())
       .filter((line) => line.length > 0);
-
-    console.log("Initial lines:", lines);
 
     const cleanedLines = lines
       .map((line) => {
@@ -174,8 +168,6 @@ Rules:
         );
       });
 
-    console.log("Cleaned lines:", cleanedLines);
-
     if (cleanedLines.length < 5) {
       // If we don't have enough sentences, add some default ones
       const defaultSentences = [
@@ -202,10 +194,8 @@ Rules:
     const finalSentences = cleanedLines.slice(0, 12);
     const cleanedLesson = finalSentences.join("\n");
 
-    console.log("Sending cleaned lesson:", cleanedLesson);
     res.json({ lesson: cleanedLesson });
   } catch (err) {
-    console.error("Error in /api/generate-lesson:", err);
     res.status(500).json({
       error: err.message,
       details:
@@ -249,4 +239,4 @@ app.get("/api/stats", requireAuth, (req, res) => {
   res.json({ stats: users[username].stats });
 });
 
-app.listen(3001, () => console.log("AI backend running on port 3001"));
+app.listen(3001);
