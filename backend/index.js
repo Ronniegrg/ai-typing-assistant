@@ -239,4 +239,70 @@ app.get("/api/stats", requireAuth, (req, res) => {
   res.json({ stats: users[username].stats });
 });
 
+// Change username endpoint
+app.put("/api/change-username", requireAuth, async (req, res) => {
+  const { newUsername } = req.body;
+  const currentUsername = req.user.username;
+
+  if (!newUsername) {
+    return res.status(400).json({ error: "New username is required" });
+  }
+
+  if (newUsername === currentUsername) {
+    return res
+      .status(400)
+      .json({ error: "New username must be different from current username" });
+  }
+
+  if (users[newUsername]) {
+    return res.status(409).json({ error: "Username already exists" });
+  }
+
+  if (!users[currentUsername]) {
+    return res.status(401).json({ error: "User not found" });
+  }
+
+  // Transfer user data to new username
+  users[newUsername] = users[currentUsername];
+  delete users[currentUsername];
+
+  // Generate new token with updated username
+  const token = jwt.sign({ username: newUsername }, JWT_SECRET, {
+    expiresIn: "7d",
+  });
+
+  res.json({ success: true, token, username: newUsername });
+});
+
+// Change password endpoint
+app.put("/api/change-password", requireAuth, async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  const username = req.user.username;
+
+  if (!currentPassword || !newPassword) {
+    return res
+      .status(400)
+      .json({ error: "Current password and new password are required" });
+  }
+
+  if (!users[username]) {
+    return res.status(401).json({ error: "User not found" });
+  }
+
+  // Verify current password
+  const valid = await bcrypt.compare(
+    currentPassword,
+    users[username].passwordHash
+  );
+  if (!valid) {
+    return res.status(401).json({ error: "Current password is incorrect" });
+  }
+
+  // Hash new password and update
+  const newPasswordHash = await bcrypt.hash(newPassword, 10);
+  users[username].passwordHash = newPasswordHash;
+
+  res.json({ success: true });
+});
+
 app.listen(3001);
